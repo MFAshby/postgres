@@ -122,6 +122,7 @@ PG_FUNCTION_INFO_V1(uuid_generate_v1mc);
 PG_FUNCTION_INFO_V1(uuid_generate_v3);
 PG_FUNCTION_INFO_V1(uuid_generate_v4);
 PG_FUNCTION_INFO_V1(uuid_generate_v5);
+PG_FUNCTION_INFO_V1(is_uuid);
 
 #ifdef HAVE_UUID_OSSP
 
@@ -530,4 +531,60 @@ uuid_generate_v5(PG_FUNCTION_ARGS)
 	return uuid_generate_internal(UUID_MAKE_V5, (unsigned char *) ns,
 								  VARDATA_ANY(name), VARSIZE_ANY_EXHDR(name));
 #endif
+}
+
+// 32 chars (16 hex pairs) + 4 optional dashes + 2 optional brackets + 1 for null terminator
+#define STR_UUID_BUF_LEN 39
+
+// This is a copy of the string_to_uuid function provided by uuid.c
+// but:
+// 1. it doesn't allocate a pg_uuid_t to actually return
+// 2. it doesn't raise an error if the syntax is wrong, it just returns false
+Datum
+is_uuid(PG_FUNCTION_ARGS)
+{
+    char buf[STR_UUID_BUF_LEN];
+    text	   *txt = PG_GETARG_TEXT_PP(0);
+    const char *src;
+    bool		braces = false;
+    int			i;
+    text_to_cstring_buffer(txt, buf, STR_UUID_BUF_LEN);
+    src = buf;
+
+    if (src[0] == '{')
+    {
+        src++;
+        braces = true;
+    }
+
+    for (i = 0; i < UUID_LEN; i++)
+    {
+        if (src[0] == '\0' || src[1] == '\0') {
+            goto syntax_error;
+        }
+        if (!isxdigit((unsigned char) src[0]) ||
+            !isxdigit((unsigned char) src[1])) {
+            goto syntax_error;
+        }
+        src += 2;
+        if (src[0] == '-' && (i % 2) == 1 && i < UUID_LEN - 1) {
+            src++;
+        }
+    }
+
+    if (braces)
+    {
+        if (*src != '}') {
+            goto syntax_error;
+        }
+        src++;
+    }
+
+    if (*src != '\0')
+        goto syntax_error;
+
+    PG_RETURN_BOOL(true);
+
+    syntax_error:
+        PG_RETURN_BOOL(false);
 }
